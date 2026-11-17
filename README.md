@@ -13,6 +13,13 @@ bolt. Every fifth wave a **Dreadnought** boss fills the top of the screen with r
 bursts — and below 40% hull it enrages, adding a twin spiral barrage. Chain kills to raise
 your score multiplier, grab power-ups, and drop a bomb when the swarm gets too close.
 
+**Clear a wave and the run becomes yours:** the game pauses for an upgrade draft — pick 1
+of 3 from nine systems (heavy rounds, rapid cycler, wingman drones that orbit and fire on
+their own, nano repair, hull plating, a tractor field, chain insurance, weapon amp, a
+bigger bomb rack) and the choice is permanent. Every run builds a different ship, the HUD
+tracks the build, and the game-over screen closes with a full run summary: waves, kills,
+accuracy, best chain, and every upgrade you drafted.
+
 ## How to play
 
 | Input | Action |
@@ -21,6 +28,7 @@ your score multiplier, grab power-ups, and drop a bomb when the swarm gets too c
 | Mouse | Aim |
 | Hold left click / Space | Fire |
 | Q / right click | Detonate a bomb (clears bullets, 60 damage to everything on screen) |
+| 1 / 2 / 3 or click a card | Choose an upgrade when the draft opens between waves |
 | P / Esc | Pause |
 | M | Mute |
 
@@ -57,6 +65,7 @@ the vendored make.fun library (`vendor/makefun-game.ts`).
 
 - `game/index.html`, `game/style.css` — the page shell
 - `game/src/world.js` — the whole simulation (fixed 1/60 s steps, seeded rng)
+- `game/src/upgrades.js` — the draft catalogue: the nine upgrade systems and their caps
 - `game/src/render.js` — canvas renderer with pre-rendered neon sprites
 - `game/src/audio.js` — procedural WebAudio sound effects, no audio files
 - `game/src/input.js`, `game/src/main.js`, `game/src/shots.js`, `game/src/config.js`, `game/src/random.js`

@@ -8,8 +8,11 @@
 // WASD or the arrow keys, aim with the mouse, hold the mouse button or Space to fire. Waves of
 // chasers, weavers, splitters, snipers and armored tanks close in, a boss arrives every fifth
 // wave — and enrages into a spiral barrage when its hull runs low — and downed enemies drop
-// spread-shot, shield, bomb, piercing-lance and nova-burst power-ups. It has a title screen,
-// pause, combo scoring, procedural WebAudio sound effects, game over and restart.
+// spread-shot, shield, bomb, piercing-lance and nova-burst power-ups. Clearing a wave opens an
+// upgrade draft (1 of 3 from nine systems: damage, fire rate, wingman drones, hull repair and
+// plating, a tractor field, chain insurance, weapon amp, bomb capacity) that permanently
+// reshapes the run, and the game-over screen closes with a full run summary. It has a title
+// screen, pause, combo scoring, procedural WebAudio sound effects, game over and restart.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
