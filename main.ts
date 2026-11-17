@@ -6,9 +6,10 @@
 //
 // Neon Swarm is a 2D arena survival shooter drawn in neon vector style on a canvas: steer with
 // WASD or the arrow keys, aim with the mouse, hold the mouse button or Space to fire. Waves of
-// chasers, weavers, splitters and armored tanks close in, a boss arrives every fifth wave, and
-// downed enemies drop spread-shot, shield and bomb power-ups. It has a title screen, pause,
-// combo scoring, procedural WebAudio sound effects, game over and restart.
+// chasers, weavers, splitters, snipers and armored tanks close in, a boss arrives every fifth
+// wave — and enrages into a spiral barrage when its hull runs low — and downed enemies drop
+// spread-shot, shield, bomb, piercing-lance and nova-burst power-ups. It has a title screen,
+// pause, combo scoring, procedural WebAudio sound effects, game over and restart.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

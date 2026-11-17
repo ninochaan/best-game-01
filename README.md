@@ -8,9 +8,10 @@
 libraries, no assets, no network. You pilot the last ship over a neon deep-space arena while
 waves of machines close in: magenta **chasers** run you down, amber **weavers** snake past
 your fire, violet **splitters** burst into minis, ember **tanks** shell you from range, and
-every fifth wave a **Dreadnought** boss fills the top of the screen with radial bullet
-bursts. Chain kills to raise your score multiplier, grab power-ups, and drop a bomb when the
-swarm gets too close.
+acid **snipers** keep their distance, pin you with a sight line, and fire one heavy charged
+bolt. Every fifth wave a **Dreadnought** boss fills the top of the screen with radial bullet
+bursts — and below 40% hull it enrages, adding a twin spiral barrage. Chain kills to raise
+your score multiplier, grab power-ups, and drop a bomb when the swarm gets too close.
 
 ## How to play
 
@@ -23,7 +24,9 @@ swarm gets too close.
 | P / Esc | Pause |
 | M | Mute |
 
-- **Power-ups** drop from wrecks: **S** spread shot (12 s), **O** shield (10 s), **B** +1 bomb (max 3).
+- **Power-ups** drop from wrecks: **S** spread shot (12 s), **O** shield (10 s), **B** +1 bomb
+  (max 3), **L** lance (10 s — a piercing beam that skewers everything in a line), **N** nova
+  (10 s — a ring of bullets bursts from your ship every 1.3 s).
 - **Combo:** every kill within 2.5 s of the last raises your chain; every 10 chain raises the
   score multiplier, up to ×8.
 - You have 3 ships and 100 hull per ship. Ramming hurts both of you — the other guy usually
