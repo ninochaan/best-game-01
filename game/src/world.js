@@ -1,11 +1,16 @@
 // The Neon Swarm simulation: player, bullets, six enemy kinds plus the boss (which enrages
 // into a spiral barrage at low hull), the lance beam and nova ring weapons, particles,
-// floating score text, power-up drops, waves and the combo multiplier. Everything advances
-// in fixed steps and every random choice comes from the seeded rng handed in at creation,
-// so a seed always plays the same game — that is what makes the screenshot scenes repeatable.
+// floating score text, power-up drops, waves and the combo multiplier. Clearing a wave opens
+// the upgrade draft — three choices from the catalogue in upgrades.js that reshape the rest
+// of the run: gun damage and fire rate, hull repair and plating, a tractor field, chain
+// insurance, longer weapon power-ups, a bigger bomb rack, and wingman drones that orbit the
+// ship and fire on their own. Everything advances in fixed steps and every random choice
+// comes from the seeded rng handed in at creation, so a seed always plays the same game —
+// that is what makes the screenshot scenes repeatable.
 // step() returns a bitmask of events; the shell turns them into sounds and announcements.
 
-import { BOLT, COLORS, ENEMY, H, LANCE, NOVA, PLAYER, POWER_KINDS, SNIPER, W } from './config.js';
+import { BOLT, COLORS, DRONE, ENEMY, H, LANCE, MAGNET, NOVA, PLAYER, POWER_KINDS, SNIPER, W } from './config.js';
+import { UPGRADES } from './upgrades.js';
 import { chance, pick, range } from './random.js';
 
 export const EVENT_SHOOT = 1;
@@ -23,6 +28,7 @@ export const EVENT_LANCE = 2048;
 export const EVENT_NOVA = 4096;
 export const EVENT_ENRAGE = 8192;
 export const EVENT_SNIPE = 16384;
+export const EVENT_DRAFT = 32768;
 
 const TAU = Math.PI * 2;
 
@@ -30,6 +36,11 @@ function dist2(ax, ay, bx, by) {
   const dx = ax - bx;
   const dy = ay - by;
   return dx * dx + dy * dy;
+}
+
+/** The draft modifiers at their untaken values; applyUpgrade grows them from here. */
+function freshMods() {
+  return { damage: 1, fireRate: 1, regen: 0, magnet: 0, saver: 0, weaponTime: 1, bombMax: 3 };
 }
 
 export function createWorld(rng) {
@@ -42,6 +53,17 @@ export function createWorld(rng) {
     bestCombo: 0,
     lives: PLAYER.lives,
     kills: 0,
+    // The run's build: levels taken per upgrade id, the derived modifiers the systems
+    // read, the ordered list of picks (the game-over summary shows it), the live drones,
+    // the three draft offers while the draft is open, and the gun accuracy tally.
+    maxHp: PLAYER.maxHp,
+    levels: {},
+    mods: freshMods(),
+    taken: [],
+    drones: [],
+    draft: null,
+    chainSaved: false,
+    stats: { fired: 0, hit: 0 },
     player: null,
     bullets: [],
     ebullets: [],
@@ -79,7 +101,7 @@ export function createWorld(rng) {
   function freshPlayer() {
     return {
       x: W / 2, y: H * 0.64, vx: 0, vy: 0, angle: -Math.PI / 2,
-      r: PLAYER.radius, hp: PLAYER.maxHp, fireCd: 0, flashT: 0,
+      r: PLAYER.radius, hp: state.maxHp, maxHp: state.maxHp, fireCd: 0, flashT: 0,
       spreadT: 0, shieldT: 0, lanceT: 0, novaT: 0, novaCd: 0,
       bombs: 1, invulnT: 0, alive: true, trailT: 0,
     };
@@ -163,6 +185,67 @@ export function createWorld(rng) {
     return EVENT_WAVE;
   }
 
+  /**
+   * Open the draft: draw three distinct, not-yet-maxed upgrades from the seeded rng and
+   * hold the run in the 'draft' phase until chooseDraft is called. When everything is
+   * maxed (a very long run) there is nothing to offer and the next wave just rolls in.
+   */
+  function openDraft() {
+    const pool = UPGRADES.filter((up) => (state.levels[up.id] ?? 0) < up.max);
+    if (pool.length === 0) {
+      state.phase = 'intermission';
+      state.phaseT = 1.2;
+      return 0;
+    }
+    const offers = [];
+    while (offers.length < Math.min(3, pool.length)) {
+      const i = Math.floor(rng() * pool.length);
+      offers.push(pool.splice(i, 1)[0].id);
+    }
+    state.draft = offers;
+    state.phase = 'draft';
+    return EVENT_DRAFT;
+  }
+
+  /** Apply one taken upgrade: grow its modifier, and run any immediate effect. */
+  function applyUpgrade(id) {
+    const p = state.player;
+    state.levels[id] = (state.levels[id] ?? 0) + 1;
+    state.taken.push(id);
+    const m = state.mods;
+    if (id === 'damage') m.damage *= 1.35;
+    else if (id === 'rapid') m.fireRate *= 1.25;
+    else if (id === 'regen') m.regen += 1.4;
+    else if (id === 'magnet') m.magnet += 1;
+    else if (id === 'saver') m.saver += 1;
+    else if (id === 'amp') m.weaponTime *= 1.4;
+    else if (id === 'plating') {
+      state.maxHp += 25;
+      if (p) {
+        p.maxHp = state.maxHp;
+        p.hp = Math.min(state.maxHp, p.hp + 25);
+      }
+    } else if (id === 'bombs') {
+      m.bombMax += 1;
+      if (p) p.bombs = Math.min(m.bombMax, p.bombs + 1);
+    } else if (id === 'drone') {
+      state.drones.push({ angle: rng() * TAU, x: p ? p.x : W / 2, y: p ? p.y : H / 2, face: 0, fireCd: 0.4, flashT: 0 });
+    }
+  }
+
+  /**
+   * Take draft offer `index` (0..2): apply it, close the draft and launch the next wave.
+   * Returns the wave-start events so the shell can make its noises; a no-op outside draft.
+   */
+  function chooseDraft(index) {
+    if (state.phase !== 'draft' || !state.draft) return 0;
+    const id = state.draft[index];
+    if (!id) return 0;
+    state.draft = null;
+    applyUpgrade(id);
+    return startWave(state.wave + 1) | EVENT_POWER;
+  }
+
   function reset() {
     state.time = 0;
     state.score = 0;
@@ -171,6 +254,14 @@ export function createWorld(rng) {
     state.bestCombo = 0;
     state.kills = 0;
     state.lives = PLAYER.lives;
+    state.maxHp = PLAYER.maxHp;
+    state.levels = {};
+    state.mods = freshMods();
+    state.taken = [];
+    state.drones = [];
+    state.draft = null;
+    state.chainSaved = false;
+    state.stats = { fired: 0, hit: 0 };
     state.player = freshPlayer();
     state.bullets.length = 0;
     state.ebullets.length = 0;
@@ -198,6 +289,8 @@ export function createWorld(rng) {
     const spec = ENEMY[enemy.kind];
     state.combo += 1;
     state.comboTime = 2.5;
+    // Every fresh ten-chain earns the insurance back: the save is once per chain.
+    if (state.combo % 10 === 0) state.chainSaved = false;
     state.bestCombo = Math.max(state.bestCombo, state.combo);
     const gained = spec.score * multiplier();
     state.score += gained;
@@ -303,7 +396,7 @@ export function createWorld(rng) {
       const cy = y0 + dy * t;
       const rr = e.r + LANCE.width;
       if (dist2(cx, cy, e.x, e.y) >= rr * rr) continue;
-      e.hp -= LANCE.damage;
+      e.hp -= LANCE.damage * state.mods.damage;
       e.flashT = 0.08;
       burst(cx, cy, COLORS.violet, 3, 170, 0.3, 2.2);
       burst(cx, cy, COLORS.ink, 1, 110, 0.2, 1.6);
@@ -334,6 +427,8 @@ export function createWorld(rng) {
     p.x = Math.min(W - p.r, Math.max(p.r, p.x + p.vx * dt));
     p.y = Math.min(H - p.r, Math.max(p.r, p.y + p.vy * dt));
     p.angle = Math.atan2(ctl.aim.y - p.y, ctl.aim.x - p.x);
+    // Nano repair: a slow, steady patch that never overheals the plated maximum.
+    if (state.mods.regen > 0 && p.hp > 0) p.hp = Math.min(p.maxHp, p.hp + state.mods.regen * dt);
     p.fireCd -= dt;
     p.flashT = Math.max(0, p.flashT - dt);
     p.spreadT = Math.max(0, p.spreadT - dt);
@@ -371,7 +466,7 @@ export function createWorld(rng) {
           state.bullets.push({
             x: p.x + Math.cos(a) * (p.r + 4), y: p.y + Math.sin(a) * (p.r + 4),
             vx: Math.cos(a) * NOVA.bulletSpeed, vy: Math.sin(a) * NOVA.bulletSpeed,
-            life: NOVA.bulletLife,
+            life: NOVA.bulletLife, dmg: state.mods.damage, src: 'nova',
           });
         }
         burst(p.x, p.y, COLORS.magenta, 10, 150, 0.35, 2.4);
@@ -384,7 +479,7 @@ export function createWorld(rng) {
         p.flashT = 0.05;
         events = fireLance(p, events);
       } else {
-        p.fireCd = 1 / PLAYER.fireRate;
+        p.fireCd = 1 / (PLAYER.fireRate * state.mods.fireRate);
         p.flashT = 0.05;
         const angles = p.spreadT > 0 ? [-0.16, 0, 0.16] : [0];
         for (const off of angles) {
@@ -392,13 +487,50 @@ export function createWorld(rng) {
           state.bullets.push({
             x: p.x + Math.cos(p.angle) * (p.r + 6), y: p.y + Math.sin(p.angle) * (p.r + 6),
             vx: Math.cos(a) * PLAYER.bulletSpeed, vy: Math.sin(a) * PLAYER.bulletSpeed,
-            life: PLAYER.bulletLife,
+            life: PLAYER.bulletLife, dmg: state.mods.damage, src: 'gun',
           });
+          state.stats.fired += 1;
         }
         events |= EVENT_SHOOT;
       }
     }
     if (ctl.bomb) events = detonateBomb(events);
+    return events;
+  }
+
+  /**
+   * The wingman drones: each one rides its orbit around the ship, faces the nearest
+   * hostile inside its range and fires at a steady cadence. Drone shots ride the same
+   * bullet list as the gun's (tagged src 'drone') at a fraction of the gun's damage, so
+   * collisions, trails and the accuracy tally treat them like any other shot.
+   */
+  function stepDrones(dt, events) {
+    const p = state.player;
+    for (const d of state.drones) {
+      d.angle += dt * 1.9;
+      d.x = p.x + Math.cos(d.angle) * DRONE.orbit;
+      d.y = p.y + Math.sin(d.angle) * DRONE.orbit;
+      d.flashT = Math.max(0, d.flashT - dt);
+      d.fireCd -= dt;
+      let target = null;
+      let bestD2 = DRONE.range * DRONE.range;
+      for (const e of state.enemies) {
+        const dd = dist2(d.x, d.y, e.x, e.y);
+        if (dd < bestD2) { bestD2 = dd; target = e; }
+      }
+      d.face = target ? Math.atan2(target.y - d.y, target.x - d.x) : d.angle + Math.PI / 2;
+      if (!target || !p.alive || d.fireCd > 0) continue;
+      d.fireCd = 1 / DRONE.fireRate;
+      d.flashT = 0.05;
+      const a = d.face;
+      state.bullets.push({
+        x: d.x + Math.cos(a) * 12, y: d.y + Math.sin(a) * 12,
+        vx: Math.cos(a) * DRONE.bulletSpeed, vy: Math.sin(a) * DRONE.bulletSpeed,
+        life: 1.1, dmg: DRONE.damage * state.mods.damage, src: 'drone',
+      });
+      state.stats.fired += 1;
+      events |= EVENT_SHOOT;
+    }
     return events;
   }
 
@@ -558,7 +690,8 @@ export function createWorld(rng) {
         const rr = e.r + 4;
         if (dist2(b.x, b.y, e.x, e.y) < rr * rr) {
           consumed = true;
-          e.hp -= 1;
+          e.hp -= b.dmg ?? 1;
+          if (b.src !== 'nova') state.stats.hit += 1;
           e.flashT = 0.07;
           // A visible shove on the light hulls; heavies and the boss shrug it off.
           if (e.kind !== 'boss' && e.kind !== 'tank') {
@@ -616,9 +749,9 @@ export function createWorld(rng) {
           state.ups.splice(ui, 1);
           if (up.kind === 'spread') { p.spreadT = 12; floatText(p.x, p.y - 26, 'SPREAD SHOT', COLORS.cyan, 16); }
           if (up.kind === 'shield') { p.shieldT = 10; floatText(p.x, p.y - 26, 'SHIELD UP', COLORS.green, 16); }
-          if (up.kind === 'bomb') { p.bombs = Math.min(3, p.bombs + 1); floatText(p.x, p.y - 26, '+1 BOMB', COLORS.amber, 16); }
-          if (up.kind === 'lance') { p.lanceT = LANCE.duration; floatText(p.x, p.y - 26, 'LANCE ONLINE', COLORS.violet, 16); }
-          if (up.kind === 'nova') { p.novaT = NOVA.duration; p.novaCd = 0; floatText(p.x, p.y - 26, 'NOVA BURST', COLORS.magenta, 16); }
+          if (up.kind === 'bomb') { p.bombs = Math.min(state.mods.bombMax, p.bombs + 1); floatText(p.x, p.y - 26, '+1 BOMB', COLORS.amber, 16); }
+          if (up.kind === 'lance') { p.lanceT = LANCE.duration * state.mods.weaponTime; floatText(p.x, p.y - 26, 'LANCE ONLINE', COLORS.violet, 16); }
+          if (up.kind === 'nova') { p.novaT = NOVA.duration * state.mods.weaponTime; p.novaCd = 0; floatText(p.x, p.y - 26, 'NOVA BURST', COLORS.magenta, 16); }
           events |= EVENT_POWER;
         }
       }
@@ -646,12 +779,23 @@ export function createWorld(rng) {
       t.y -= 44 * dt;
       if (t.life <= 0) state.texts.splice(i, 1);
     }
+    const p = state.player;
     for (let i = state.ups.length - 1; i >= 0; i -= 1) {
       const up = state.ups[i];
       up.t += dt;
       up.life -= dt;
       up.y += 26 * dt;
       up.x += Math.sin(up.t * 2.4) * 12 * dt;
+      // Tractor field: inside its radius a drifting drop homes on the ship instead.
+      if (p && p.alive && state.mods.magnet > 0) {
+        const radius = MAGNET.radiusPerLevel * state.mods.magnet;
+        const d2 = dist2(up.x, up.y, p.x, p.y);
+        if (d2 < radius * radius && d2 > 4) {
+          const d = Math.sqrt(d2);
+          up.x += ((p.x - up.x) / d) * MAGNET.pullSpeed * dt;
+          up.y += ((p.y - up.y) / d) * MAGNET.pullSpeed * dt;
+        }
+      }
       if (up.life <= 0 || up.y > H + 24) state.ups.splice(i, 1);
     }
   }
@@ -665,9 +809,25 @@ export function createWorld(rng) {
     state.time += dt;
     state.shake = Math.max(0, state.shake - 60 * dt);
     state.flash = Math.max(0, state.flash - 1.8 * dt);
+    // The draft holds the run: only the backdrop and the effects keep breathing while
+    // the pilot chooses, and the chain timer waits with everything else.
+    if (state.phase === 'draft') {
+      stepFx(dt);
+      return events;
+    }
     if (state.comboTime > 0) {
       state.comboTime -= dt;
-      if (state.comboTime <= 0) state.combo = 0;
+      if (state.comboTime <= 0) {
+        // Chain insurance: a level of the saver turns one break per chain into a halving.
+        if (state.mods.saver > 0 && !state.chainSaved && state.combo >= 8 && state.player) {
+          state.combo = Math.floor(state.combo / 2);
+          state.comboTime = 1.6;
+          state.chainSaved = true;
+          floatText(state.player.x, state.player.y - 36, 'CHAIN SAVED', COLORS.amber, 15);
+        } else {
+          state.combo = 0;
+        }
+      }
     }
     stepFx(dt);
     if (attract) {
@@ -701,14 +861,15 @@ export function createWorld(rng) {
           edgeSpawn('chaser');
         }
       } else if (state.enemies.length === 0) {
-        state.phase = 'intermission';
-        state.phaseT = 1.7;
+        // Wave cleared: the draft opens before the next wave rolls in.
+        events |= openDraft();
       }
     } else if (state.phase === 'intermission') {
       state.phaseT -= dt;
       if (state.phaseT <= 0) events |= startWave(state.wave + 1);
     }
     events = stepPlayer(dt, ctl, events);
+    events = stepDrones(dt, events);
     events = stepEnemies(dt, events);
     // Bullets fly.
     for (let i = state.bullets.length - 1; i >= 0; i -= 1) {
@@ -730,5 +891,5 @@ export function createWorld(rng) {
   }
 
   reset();
-  return { state, reset, step, spawnEnemy, burst, floatText, multiplier: () => multiplier() };
+  return { state, reset, step, chooseDraft, spawnEnemy, burst, floatText, multiplier: () => multiplier() };
 }

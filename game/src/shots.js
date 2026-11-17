@@ -1,11 +1,42 @@
 // The screenshot scenes behind ?shot=menu|play|boss|over. Each one resets the world and then
 // composes a still by hand — pre-placed enemies, bullets frozen mid-flight, a burst of
 // particles, the HUD set to plausible mid-game values — using only the seeded rng, so the
-// same seed always gives the same frame. The renderer then paints the scene with exactly the
-// code the live game uses, so a screenshot is the real game, posed.
+// same seed always gives the same frame. The play, boss and over scenes also pose a build:
+// the upgrades a pilot would have drafted by then (levels, modifiers, a live wingman drone
+// on its orbit), so the stills show the draft system the run is built on. The renderer then
+// paints the scene with exactly the code the live game uses, so a screenshot is the real
+// game, posed.
 
 import { COLORS, W } from './config.js';
 import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+
+/**
+ * Pose a drafted build on the state: the ordered picks, their levels, the derived
+ * modifiers, and (for the drone pick) a drone placed on its orbit, facing its target,
+ * with two of its shots already in the air.
+ */
+function stageBuild(state, picks, mods, droneFace = null) {
+  state.taken = [...picks];
+  state.levels = {};
+  for (const id of picks) state.levels[id] = (state.levels[id] ?? 0) + 1;
+  Object.assign(state.mods, mods);
+  if (state.levels.drone) {
+    const p = state.player;
+    const angle = 2.35;
+    const drone = {
+      angle, face: droneFace ?? angle + Math.PI / 2, fireCd: 0.3, flashT: 0.04,
+      x: p.x + Math.cos(angle) * 54, y: p.y + Math.sin(angle) * 54,
+    };
+    state.drones = [drone];
+    for (const r of [30, 96]) {
+      state.bullets.push({
+        x: drone.x + Math.cos(drone.face) * r, y: drone.y + Math.sin(drone.face) * r,
+        vx: Math.cos(drone.face) * 700, vy: Math.sin(drone.face) * 700,
+        life: 1, dmg: 1, src: 'drone',
+      });
+    }
+  }
+}
 
 function quietArena(world) {
   const state = world.state;
@@ -28,6 +59,8 @@ function stageBeam(state, x, y, angle) {
 function stageMenu(world) {
   world.reset();
   const state = quietArena(world);
+  // Park the ship below the help text, so the words stay readable through the ring.
+  state.player.y = 716;
   // A decorative ring of the cast, drifting around the parked player ship.
   const cast = [
     ['chaser', W / 2 - 430, 300],
@@ -38,6 +71,12 @@ function stageMenu(world) {
     ['sniper', W / 2 + 580, 450],
   ];
   for (const [kind, x, y] of cast) world.spawnEnemy(kind, x, y);
+  // A wingman drone rides its orbit around the parked ship, on display like the cast.
+  const p = state.player;
+  state.drones = [{
+    angle: 0.8, face: 0.8 + Math.PI / 2, fireCd: 1, flashT: 0,
+    x: p.x + Math.cos(0.8) * 54, y: p.y + Math.sin(0.8) * 54,
+  }];
   // The two new power-ups hover at the edges of the ring, on display.
   state.ups.push({ kind: 'lance', x: W / 2 - 585, y: 462, t: 0.6, life: 8 });
   state.ups.push({ kind: 'nova', x: W / 2 + 585, y: 168, t: 1.4, life: 8 });
@@ -49,11 +88,11 @@ function stageMenu(world) {
 function stagePlay(world) {
   world.reset();
   const state = quietArena(world);
-  state.wave = 4;
-  state.score = 12750;
-  state.combo = 14;
+  state.wave = 6;
+  state.score = 18940;
+  state.combo = 27;
   state.comboTime = 1.8;
-  state.kills = 57;
+  state.kills = 84;
   const p = state.player;
   p.x = 520;
   p.y = 560;
@@ -62,6 +101,10 @@ function stagePlay(world) {
   p.lanceT = 7;
   p.novaT = 4;
   p.bombs = 2;
+  // Five waves in, the build shows: a wingman drone (already firing on the weaver),
+  // heavy rounds and a rapid cycler — the HUD chips and the drone are both live.
+  stageBuild(state, ['drone', 'damage', 'rapid'], { damage: 1.35, fireRate: 1.25 },
+    Math.atan2(178 - 598, 862 - 482));
   // The lance is live: the pilot is skewering the lead chaser, mid-beam.
   p.angle = Math.atan2(262 - p.y, 985 - p.x);
   stageBeam(state, p.x, p.y, p.angle);
@@ -98,11 +141,11 @@ function stagePlay(world) {
 function stageBoss(world) {
   world.reset();
   const state = quietArena(world);
-  state.wave = 5;
-  state.score = 21300;
-  state.combo = 22;
+  state.wave = 10;
+  state.score = 48600;
+  state.combo = 38;
   state.comboTime = 2.1;
-  state.kills = 96;
+  state.kills = 214;
   state.lives = 2;
   const boss = world.spawnEnemy('boss', W / 2 + 130, 202);
   // Deep in the enrage: a third of its hull left, spiral barrage already spinning.
@@ -117,6 +160,10 @@ function stageBoss(world) {
   p.shieldT = 4;
   p.lanceT = 6;
   p.bombs = 1;
+  // A nine-wave build behind the pilot: drone wingman (firing up at the dreadnought),
+  // heavy rounds twice over, a rapid cycler and nano repair ticking.
+  stageBuild(state, ['drone', 'damage', 'damage', 'rapid', 'regen'],
+    { damage: 1.82, fireRate: 1.25, regen: 1.4 }, Math.atan2(202 - 738, 850 - 617));
   // The pilot answers with the lance, straight into the dreadnought's core.
   stageBeam(state, p.x, p.y, p.angle);
   // The boss's radial burst, frozen on its way out, plus an aimed trio.
@@ -150,13 +197,22 @@ function stageBoss(world) {
 function stageOver(world) {
   world.reset();
   const state = quietArena(world);
-  state.wave = 6;
-  state.score = 18740;
-  state.kills = 132;
-  state.bestCombo = 34;
+  state.wave = 9;
+  state.score = 41275;
+  state.kills = 236;
+  state.bestCombo = 41;
   state.combo = 0;
   state.comboTime = 0;
   state.lives = 0;
+  // The run the summary panel tells: eight waves drafted, 70% accuracy over 12 minutes.
+  state.stats = { fired: 612, hit: 431 };
+  state.time = 754;
+  stageBuild(state, ['drone', 'damage', 'rapid', 'damage', 'plating', 'saver'],
+    { damage: 1.82, fireRate: 1.25, saver: 1 });
+  state.maxHp = 125;
+  // The wingman went down with the ship: no drone, and none of its shots left hanging.
+  state.drones = [];
+  state.bullets = state.bullets.filter((b) => b.src !== 'drone');
   state.player.alive = false;
   state.player.hp = 0;
   state.player.bombs = 0;

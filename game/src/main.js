@@ -1,7 +1,8 @@
 // Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s steps
 // (several in a slow frame, none in a fast one), and the renderer paints what is there. The
-// game moves between four screens: title, play, paused and game over. World events from each
-// step are turned into the synthesized sound effects here.
+// game moves between four screens: title, play, paused and game over — and inside play, the
+// world itself pauses for the between-wave upgrade draft, which this loop answers with the
+// 1/2/3 keys or a click on a card. World events from each step become sound effects here.
 //
 // ?seed=N fixes the random stream. ?shot=menu|play|boss|over (with &seed=N) stages that
 // scene instead of running the loop, paints it twice and sets window.__shotReady for a
@@ -10,12 +11,17 @@
 import { BEST_KEY, STEP, W } from './config.js';
 import { createRandom } from './random.js';
 import {
-  createWorld, EVENT_BOMB, EVENT_BOSS, EVENT_BOSSDOWN, EVENT_DEATH, EVENT_ENRAGE,
+  createWorld, EVENT_BOMB, EVENT_BOSS, EVENT_BOSSDOWN, EVENT_DEATH, EVENT_DRAFT, EVENT_ENRAGE,
   EVENT_HITMARK, EVENT_HURT, EVENT_KILL, EVENT_LANCE, EVENT_NOVA, EVENT_OVER,
   EVENT_POWER, EVENT_SHOOT, EVENT_SNIPE,
 } from './world.js';
-import { ACTION_BOMB, ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import {
+  ACTION_BOMB, ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, ACTION_PICK1, ACTION_PICK2,
+  ACTION_PICK3, createInput,
+} from './input.js';
+import {
+  createRenderer, draftCardRects, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE,
+} from './render.js';
 import { createAudio } from './audio.js';
 import { stageShot } from './shots.js';
 
@@ -125,6 +131,29 @@ function runGame() {
     if (events & EVENT_NOVA) audio.nova();
     if (events & EVENT_ENRAGE) audio.enrage();
     if (events & EVENT_SNIPE) audio.snipe();
+    if (events & EVENT_DRAFT) {
+      audio.draft();
+      announce(`Wave ${world.state.wave} cleared. Choose an upgrade: press 1, 2 or 3.`);
+    }
+  }
+
+  /**
+   * The draft choice for this frame, or -1: the 1/2/3 keys, or a click inside a card
+   * (the renderer owns the card rectangles, so the hit test matches the picture).
+   */
+  function draftPick(actions) {
+    if (actions & ACTION_PICK1) return 0;
+    if (actions & ACTION_PICK2) return 1;
+    if (actions & ACTION_PICK3) return 2;
+    if (actions & ACTION_CONFIRM) {
+      const rects = draftCardRects();
+      for (let i = 0; i < rects.length; i += 1) {
+        const r = rects[i];
+        if (input.mouse.x >= r.x && input.mouse.x <= r.x + r.w
+          && input.mouse.y >= r.y && input.mouse.y <= r.y + r.h) return i;
+      }
+    }
+    return -1;
   }
 
   function frame(now) {
@@ -158,6 +187,13 @@ function runGame() {
       fire: input.firing(),
       bomb: (actions & ACTION_BOMB) !== 0,
     };
+    if (screen === SCREEN_PLAY && world.state.phase === 'draft') {
+      const pick = draftPick(actions);
+      if (pick >= 0) {
+        playEvents(world.chooseDraft(pick));
+        announce(`Upgrade taken. Wave ${world.state.wave} incoming.`);
+      }
+    }
     if (screen === SCREEN_PLAY) {
       while (accumulator >= STEP && screen === SCREEN_PLAY) {
         const events = world.step(STEP, ctl, false);

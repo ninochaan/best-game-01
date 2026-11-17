@@ -7,11 +7,16 @@ export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_MUTE = 4;
 export const ACTION_BOMB = 8;
+/** Draft picks: the 1 / 2 / 3 keys choose between the three upgrade cards. */
+export const ACTION_PICK1 = 16;
+export const ACTION_PICK2 = 32;
+export const ACTION_PICK3 = 64;
 
 const GAME_KEYS = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD',
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'Space', 'KeyP', 'KeyQ', 'KeyM', 'Enter', 'Escape',
+  'Digit1', 'Digit2', 'Digit3',
 ]);
 
 export function createInput(canvas, toLogical) {
@@ -33,6 +38,9 @@ export function createInput(canvas, toLogical) {
     if (event.code === 'KeyP' || event.code === 'Escape') actions |= ACTION_PAUSE;
     if (event.code === 'KeyM') actions |= ACTION_MUTE;
     if (event.code === 'KeyQ') actions |= ACTION_BOMB;
+    if (event.code === 'Digit1') actions |= ACTION_PICK1;
+    if (event.code === 'Digit2') actions |= ACTION_PICK2;
+    if (event.code === 'Digit3') actions |= ACTION_PICK3;
   });
   window.addEventListener('keyup', (event) => {
     held.delete(event.code);

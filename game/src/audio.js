@@ -135,6 +135,12 @@ export function createAudio() {
     ui() {
       tone('square', 700, 900, 0.06, 0.08);
     },
+    /** The draft opening: a soft rising triad, the sound of a choice arriving. */
+    draft() {
+      tone('triangle', 440, 440, 0.12, 0.12);
+      tone('triangle', 554, 554, 0.12, 0.12, 0.09);
+      tone('triangle', 659, 659, 0.2, 0.12, 0.18);
+    },
     over() {
       tone('triangle', 392, 392, 0.22, 0.2);
       tone('triangle', 311, 311, 0.22, 0.2, 0.22);

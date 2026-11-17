@@ -80,3 +80,13 @@ export const NOVA = { duration: 10, interval: 1.3, bullets: 14, bulletSpeed: 540
 
 /** Power-up kinds, in drop-table order. */
 export const POWER_KINDS = ['spread', 'shield', 'bomb', 'lance', 'nova'];
+
+/**
+ * The wingman drone, earned from the between-wave draft: it orbits the ship at `orbit`
+ * pixels, picks the nearest hostile inside `range` and fires `fireRate` shots a second at
+ * a fraction of the ship's gun damage. A second draft pick launches a second drone.
+ */
+export const DRONE = { orbit: 54, range: 540, fireRate: 3.4, bulletSpeed: 700, damage: 0.8 };
+
+/** Tractor field (draft): power-ups inside `radiusPerLevel` x level drift to the ship. */
+export const MAGNET = { radiusPerLevel: 150, pullSpeed: 360 };

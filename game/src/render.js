@@ -5,12 +5,22 @@
 // mouse points back into world coordinates. HUD and screen overlays are drawn unshaken, on
 // top of the shaken world, under a soft vignette.
 
-import { BOLT, COLORS, ENEMY, H, PLAYER, SNIPER, W } from './config.js';
+import { BOLT, COLORS, DRONE, ENEMY, H, PLAYER, SNIPER, W } from './config.js';
+import { upgradeById } from './upgrades.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
 export const SCREEN_OVER = 'over';
+
+/** The draft cards' rectangles in world coordinates, for offers 0, 1 and 2. */
+export function draftCardRects() {
+  const w = 372;
+  const h = 238;
+  const gap = 26;
+  const x0 = (W - (3 * w + 2 * gap)) / 2;
+  return [0, 1, 2].map((i) => ({ x: x0 + i * (w + gap), y: 306, w, h }));
+}
 
 const FONT = '"Segoe UI", system-ui, -apple-system, sans-serif';
 const MONO = 'ui-monospace, "Cascadia Mono", Consolas, monospace';
@@ -115,6 +125,10 @@ function buildSprites() {
   };
   sprites.bullet = dot(COLORS.cyan);
   sprites.bolt = dot(COLORS.ember);
+  // The wingman drone: a pocket version of the player's hull in magenta, and its paler shot.
+  const droneSize = Math.ceil(PLAYER.radius * 0.62 * 4.6);
+  sprites.drone = makeSprite(droneSize, COLORS.magenta, (ctx) => shipPath(ctx, PLAYER.radius * 0.62));
+  sprites.droneBullet = dot(COLORS.lilac);
   return sprites;
 }
 
@@ -272,6 +286,33 @@ export function createRenderer(canvas) {
     }
   }
 
+  /** The wingman drones: a faint orbit ring, the pocket hull, and a blink when it fires. */
+  function drawDrones(state) {
+    const p = state.player;
+    if (!p || !state.drones.length) return;
+    ctx.save();
+    ctx.globalAlpha = 0.16;
+    ctx.strokeStyle = COLORS.magenta;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 9]);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, DRONE.orbit, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    for (const d of state.drones) {
+      drawSprite(sprites.drone, d.x, d.y, d.face);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      if (d.flashT > 0) {
+        const nx = d.x + Math.cos(d.face) * 14;
+        const ny = d.y + Math.sin(d.face) * 14;
+        ctx.drawImage(sprites.droneBullet, nx - 9, ny - 9, 18, 18);
+      }
+    }
+  }
+
   function drawBeams(state) {
     if (!state.beams.length) return;
     ctx.save();
@@ -357,9 +398,13 @@ export function createRenderer(canvas) {
         ctx.fillRect(e.x - w / 2, e.y - e.r - 13, w * Math.max(0, e.hp / e.maxHp), 4);
       }
     }
-    for (const b of state.bullets) ctx.drawImage(sprites.bullet, b.x - 12, b.y - 12);
+    for (const b of state.bullets) {
+      if (b.src === 'drone') ctx.drawImage(sprites.droneBullet, b.x - 9, b.y - 9, 18, 18);
+      else ctx.drawImage(sprites.bullet, b.x - 12, b.y - 12);
+    }
     drawBeams(state);
     drawPlayer(state);
+    drawDrones(state);
     // Particles burn additively.
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -432,12 +477,45 @@ export function createRenderer(canvas) {
       bar(W / 2 - w / 2, 104, w, 8, state.boss.hp / state.boss.maxHp, enraged ? COLORS.red : COLORS.ember);
     }
     if (!p) return;
+    // The build so far, under the score: one chip per upgrade kind taken, with its level.
+    if (state.taken && state.taken.length) {
+      const seen = [];
+      for (const id of state.taken) if (!seen.includes(id)) seen.push(id);
+      ctx.textAlign = 'left';
+      ctx.font = `600 10px ${FONT}`;
+      ctx.fillStyle = COLORS.dim;
+      ctx.fillText('BUILD', 26, 100);
+      seen.forEach((id, i) => {
+        const up = upgradeById(id);
+        if (!up) return;
+        const cx = 66 + i * 27;
+        ctx.beginPath();
+        ctx.arc(cx, 96, 10, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(8,10,26,0.9)';
+        ctx.fill();
+        ctx.strokeStyle = up.color;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.fillStyle = up.color;
+        ctx.font = `800 10px ${FONT}`;
+        ctx.textAlign = 'center';
+        ctx.fillText(up.glyph, cx, 99.5);
+        ctx.textAlign = 'left';
+        const lvl = state.levels[id] ?? 1;
+        if (lvl > 1) {
+          ctx.font = `700 9px ${MONO}`;
+          ctx.fillStyle = COLORS.ink;
+          ctx.fillText(String(lvl), cx + 8, 90);
+        }
+        ctx.font = `600 10px ${FONT}`;
+      });
+    }
     // Hull + lives, bottom-left.
     ctx.textAlign = 'left';
     ctx.font = `600 12px ${FONT}`;
     ctx.fillStyle = COLORS.dim;
     ctx.fillText('HULL', 26, H - 58);
-    const hpFrac = Math.max(0, p.hp / PLAYER.maxHp);
+    const hpFrac = Math.max(0, p.hp / (p.maxHp ?? PLAYER.maxHp));
     const hpColor = hpFrac > 0.5 ? COLORS.green : hpFrac > 0.25 ? COLORS.amber : COLORS.red;
     bar(26, H - 48, 220, 13, hpFrac, hpColor);
     for (let i = 0; i < state.lives; i += 1) {
@@ -532,11 +610,85 @@ export function createRenderer(canvas) {
       'WASD / ARROWS — steer        MOUSE — aim        HOLD CLICK / SPACE — fire',
       'Q / RIGHT CLICK — bomb        P — pause        M — mute',
       'Survive the waves. Chain kills to raise your multiplier.',
+      'Clear a wave and draft 1 of 3 upgrades — drones, damage, repair — your build carries the run.',
       'Grab S spread, O shield, B bombs, L the piercing lance, N the nova burst.',
       'Dodge the acid snipers\u2019 sight lines — and a boss comes every fifth wave.',
     ];
-    lines.forEach((line, i) => ctx.fillText(line, W / 2, 512 + i * 30));
+    lines.forEach((line, i) => ctx.fillText(line, W / 2, 498 + i * 28));
     if (best > 0) centerText(`BEST ${best}`, 668, `700 19px ${MONO}`, COLORS.amber);
+  }
+
+  /**
+   * The draft overlay: three upgrade cards over the dimmed, frozen arena. The card
+   * geometry lives here and is exported, so the shell hit-tests clicks against exactly
+   * the rectangles on screen.
+   */
+  function drawDraft(state) {
+    dimScreen(0.62);
+    centerText(`WAVE ${state.wave} CLEARED`, 218, `800 46px ${FONT}`, COLORS.ink, 18);
+    centerText('CHOOSE AN UPGRADE — YOUR SHIP KEEPS IT FOR THE REST OF THE RUN', 262, `600 16px ${FONT}`, COLORS.amber);
+    const rects = draftCardRects();
+    state.draft.forEach((id, i) => {
+      const up = upgradeById(id);
+      if (!up) return;
+      const r = rects[i];
+      ctx.save();
+      ctx.fillStyle = 'rgba(10, 13, 34, 0.96)';
+      ctx.strokeStyle = up.color;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = up.color;
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.roundRect(r.x, r.y, r.w, r.h, 14);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Icon medallion.
+      ctx.beginPath();
+      ctx.arc(r.x + r.w / 2, r.y + 58, 27, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(8,10,26,0.9)';
+      ctx.fill();
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+      ctx.fillStyle = up.color;
+      ctx.font = `800 26px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(up.glyph, r.x + r.w / 2, r.y + 59);
+      ctx.fillStyle = COLORS.ink;
+      ctx.font = `800 21px ${FONT}`;
+      ctx.fillText(up.name, r.x + r.w / 2, r.y + 108);
+      // Level pips: filled for levels already held, hollow up to the cap.
+      const lvl = state.levels[id] ?? 0;
+      for (let k = 0; k < up.max; k += 1) {
+        ctx.beginPath();
+        ctx.arc(r.x + r.w / 2 + (k - (up.max - 1) / 2) * 16, r.y + 132, 4.5, 0, Math.PI * 2);
+        if (k < lvl) { ctx.fillStyle = up.color; ctx.fill(); }
+        else { ctx.strokeStyle = up.color; ctx.lineWidth = 1.4; ctx.stroke(); }
+      }
+      ctx.fillStyle = COLORS.dim;
+      ctx.font = `500 15px ${FONT}`;
+      wrapText(up.blurb, r.x + r.w / 2, r.y + 162, r.w - 44, 21);
+      ctx.fillStyle = up.color;
+      ctx.font = `700 15px ${MONO}`;
+      ctx.fillText(`[ ${i + 1} ]`, r.x + r.w / 2, r.y + r.h - 22);
+      ctx.restore();
+    });
+    centerText('PRESS 1 · 2 · 3 OR CLICK A CARD', 640, `600 15px ${FONT}`, COLORS.dim);
+  }
+
+  /** Word-wrap a short string onto centred lines (the draft card blurbs). */
+  function wrapText(text, cx, y, maxWidth, lineHeight) {
+    const words = text.split(' ');
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+      const trial = line ? `${line} ${word}` : word;
+      if (ctx.measureText(trial).width > maxWidth && line) { lines.push(line); line = word; }
+      else line = trial;
+    }
+    if (line) lines.push(line);
+    lines.forEach((l, i) => ctx.fillText(l, cx, y + i * lineHeight));
   }
 
   function drawPaused() {
@@ -545,19 +697,91 @@ export function createRenderer(canvas) {
     centerText('P or ESC to resume — ENTER also works', 470, `500 18px ${FONT}`, COLORS.dim);
   }
 
+  /**
+   * Game over, with the run summary: the score and best, the run's vital statistics in
+   * two columns, and the build the pilot drafted — every upgrade taken, with its level —
+   * so the screen reads as the story of a run, not just a number.
+   */
   function drawOver(state, best) {
     dimScreen(0.6);
-    centerText('GAME OVER', 300, `800 84px ${FONT}`, COLORS.red, 30);
+    centerText('GAME OVER', 216, `800 76px ${FONT}`, COLORS.red, 30);
     const isBest = state.score >= best && state.score > 0;
-    centerText(`SCORE  ${state.score}`, 402, `700 34px ${MONO}`, COLORS.ink);
-    if (isBest) centerText('NEW BEST!', 448, `700 20px ${FONT}`, COLORS.amber, 10);
-    ctx.font = `500 18px ${FONT}`;
+    centerText(`SCORE  ${state.score}`, 288, `700 32px ${MONO}`, COLORS.ink);
+    if (isBest) centerText('NEW BEST!', 324, `700 18px ${FONT}`, COLORS.amber, 10);
+    // The summary panel.
+    const px = W / 2 - 350;
+    const py = 356;
+    const pw = 700;
+    const ph = 252;
+    ctx.save();
+    ctx.fillStyle = 'rgba(10, 13, 34, 0.94)';
+    ctx.strokeStyle = 'rgba(143, 163, 200, 0.55)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(px, py, pw, ph, 14);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    const acc = state.stats && state.stats.fired > 0
+      ? Math.min(100, Math.round((100 * state.stats.hit) / state.stats.fired))
+      : 0;
+    const rows = [
+      ['WAVE REACHED', String(state.wave), 'KILLS', String(state.kills)],
+      ['BEST CHAIN', `x${Math.min(8, 1 + Math.floor(state.bestCombo / 10))} (${state.bestCombo})`, 'ACCURACY', `${acc}%`],
+      ['BEST SCORE', String(Math.max(best, state.score)), 'TIME', `${Math.floor(state.time / 60)}:${String(Math.floor(state.time % 60)).padStart(2, '0')}`],
+    ];
+    ctx.textBaseline = 'middle';
+    rows.forEach((row, i) => {
+      const y = py + 40 + i * 38;
+      ctx.textAlign = 'left';
+      ctx.font = `600 12px ${FONT}`;
+      ctx.fillStyle = COLORS.dim;
+      ctx.fillText(row[0], px + 36, y);
+      ctx.fillText(row[2], px + 386, y);
+      ctx.font = `700 21px ${MONO}`;
+      ctx.fillStyle = COLORS.ink;
+      ctx.fillText(row[1], px + 168, y);
+      ctx.fillText(row[3], px + 518, y);
+    });
+    // The build line: every upgrade taken this run, in the order it was drafted.
+    ctx.textAlign = 'left';
+    ctx.font = `600 12px ${FONT}`;
     ctx.fillStyle = COLORS.dim;
-    ctx.textAlign = 'center';
-    ctx.fillText(`Wave reached ${state.wave}      Kills ${state.kills}      Best chain x${Math.min(8, 1 + Math.floor(state.bestCombo / 10))} (${state.bestCombo})`, W / 2, 502);
-    ctx.fillText(`Best score ${best}`, W / 2, 534);
+    ctx.fillText('UPGRADES TAKEN', px + 36, py + 162);
+    if (state.taken && state.taken.length) {
+      const seen = [];
+      for (const id of state.taken) if (!seen.includes(id)) seen.push(id);
+      seen.slice(0, 9).forEach((id, i) => {
+        const up = upgradeById(id);
+        if (!up) return;
+        const cx = px + 48 + i * 46;
+        const cy = py + 204;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 15, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(8,10,26,0.9)';
+        ctx.fill();
+        ctx.strokeStyle = up.color;
+        ctx.lineWidth = 1.8;
+        ctx.stroke();
+        ctx.fillStyle = up.color;
+        ctx.font = `800 13px ${FONT}`;
+        ctx.textAlign = 'center';
+        ctx.fillText(up.glyph, cx, cy + 0.5);
+        const lvl = state.levels[id] ?? 1;
+        if (lvl > 1) {
+          ctx.font = `700 11px ${MONO}`;
+          ctx.fillStyle = COLORS.ink;
+          ctx.fillText(`x${lvl}`, cx + 17, cy - 10);
+        }
+      });
+      ctx.textAlign = 'left';
+    } else {
+      ctx.font = `500 15px ${FONT}`;
+      ctx.fillStyle = COLORS.dim;
+      ctx.fillText('None — the swarm took the ship before the first draft.', px + 36, py + 204);
+    }
     const blink = Math.sin(state.time * 3.4) > -0.2;
-    if (blink) centerText('PRESS ENTER OR CLICK TO FLY AGAIN', 606, `700 21px ${FONT}`, COLORS.ink, 10);
+    if (blink) centerText('PRESS ENTER OR CLICK TO FLY AGAIN', 668, `700 20px ${FONT}`, COLORS.ink, 10);
   }
 
   function drawBanner(state) {
@@ -595,6 +819,7 @@ export function createRenderer(canvas) {
     if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED) {
       drawHud(state, mult, muted);
       drawBanner(state);
+      if (screen === SCREEN_PLAY && state.phase === 'draft' && state.draft) drawDraft(state);
     }
     if (screen === SCREEN_TITLE) drawTitle(state, best);
     if (screen === SCREEN_PAUSED) drawPaused();
