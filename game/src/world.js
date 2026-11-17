@@ -1,10 +1,11 @@
-// The Neon Swarm simulation: player, bullets, five enemy kinds plus the boss, particles,
-// floating score text, power-up drops, waves and the combo multiplier. Everything advances in
-// fixed steps and every random choice comes from the seeded rng handed in at creation, so a
-// seed always plays the same game — that is what makes the screenshot scenes repeatable.
+// The Neon Swarm simulation: player, bullets, six enemy kinds plus the boss (which enrages
+// into a spiral barrage at low hull), the lance beam and nova ring weapons, particles,
+// floating score text, power-up drops, waves and the combo multiplier. Everything advances
+// in fixed steps and every random choice comes from the seeded rng handed in at creation,
+// so a seed always plays the same game — that is what makes the screenshot scenes repeatable.
 // step() returns a bitmask of events; the shell turns them into sounds and announcements.
 
-import { BOLT, COLORS, ENEMY, H, PLAYER, POWER_KINDS, W } from './config.js';
+import { BOLT, COLORS, ENEMY, H, LANCE, NOVA, PLAYER, POWER_KINDS, SNIPER, W } from './config.js';
 import { chance, pick, range } from './random.js';
 
 export const EVENT_SHOOT = 1;
@@ -18,6 +19,10 @@ export const EVENT_BOMB = 128;
 export const EVENT_WAVE = 256;
 export const EVENT_BOSS = 512;
 export const EVENT_BOSSDOWN = 1024;
+export const EVENT_LANCE = 2048;
+export const EVENT_NOVA = 4096;
+export const EVENT_ENRAGE = 8192;
+export const EVENT_SNIPE = 16384;
 
 const TAU = Math.PI * 2;
 
@@ -40,6 +45,7 @@ export function createWorld(rng) {
     player: null,
     bullets: [],
     ebullets: [],
+    beams: [],
     enemies: [],
     parts: [],
     texts: [],
@@ -74,7 +80,8 @@ export function createWorld(rng) {
     return {
       x: W / 2, y: H * 0.64, vx: 0, vy: 0, angle: -Math.PI / 2,
       r: PLAYER.radius, hp: PLAYER.maxHp, fireCd: 0, flashT: 0,
-      spreadT: 0, shieldT: 0, bombs: 1, invulnT: 0, alive: true, trailT: 0,
+      spreadT: 0, shieldT: 0, lanceT: 0, novaT: 0, novaCd: 0,
+      bombs: 1, invulnT: 0, alive: true, trailT: 0,
     };
   }
 
@@ -103,6 +110,7 @@ export function createWorld(rng) {
       kind, x, y, vx: 0, vy: 0, hp, maxHp: hp, r: spec.radius,
       age: range(rng, 0, 10), seed: rng() * TAU, fireT: range(rng, 1.2, 2.6),
       burstT: 2.4, spreadT: 1.2, flashT: 0, angle: Math.PI / 2,
+      charge: 0, enraged: false, spiralT: 0.5, spiralA: 0,
     };
     state.enemies.push(enemy);
     if (kind === 'boss') state.boss = enemy;
@@ -138,9 +146,9 @@ export function createWorld(rng) {
     let budget = 6 + n * 3;
     const kinds = ['chaser'];
     if (n >= 2) kinds.push('weaver');
-    if (n >= 3) kinds.push('splitter');
+    if (n >= 3) kinds.push('splitter', 'sniper');
     if (n >= 4) kinds.push('tank');
-    const cost = { chaser: 1, weaver: 2, splitter: 3, tank: 4 };
+    const cost = { chaser: 1, weaver: 2, splitter: 3, sniper: 3, tank: 4 };
     while (budget > 0) {
       const kind = pick(rng, kinds);
       if (cost[kind] > budget && kind !== 'chaser') continue;
@@ -166,6 +174,7 @@ export function createWorld(rng) {
     state.player = freshPlayer();
     state.bullets.length = 0;
     state.ebullets.length = 0;
+    state.beams.length = 0;
     state.enemies.length = 0;
     state.parts.length = 0;
     state.texts.length = 0;
@@ -270,6 +279,45 @@ export function createWorld(rng) {
     return events | EVENT_BOMB;
   }
 
+  /**
+   * One lance shot: an instant beam from the ship's nose along its aim that pierces
+   * everything in its path. The beam visual is left in state.beams for the renderer to
+   * fade; the damage is applied here, back to front, so a splitter bursting into minis
+   * does not shield whatever stood behind it.
+   */
+  function fireLance(p, events) {
+    const dx = Math.cos(p.angle);
+    const dy = Math.sin(p.angle);
+    const x0 = p.x + dx * (p.r + 6);
+    const y0 = p.y + dy * (p.r + 6);
+    state.beams.push({
+      x1: x0, y1: y0,
+      x2: x0 + dx * LANCE.length, y2: y0 + dy * LANCE.length,
+      life: 0.1, maxLife: 0.1,
+    });
+    for (let ei = state.enemies.length - 1; ei >= 0; ei -= 1) {
+      const e = state.enemies[ei];
+      const along = (e.x - x0) * dx + (e.y - y0) * dy;
+      const t = Math.max(0, Math.min(LANCE.length, along));
+      const cx = x0 + dx * t;
+      const cy = y0 + dy * t;
+      const rr = e.r + LANCE.width;
+      if (dist2(cx, cy, e.x, e.y) >= rr * rr) continue;
+      e.hp -= LANCE.damage;
+      e.flashT = 0.08;
+      burst(cx, cy, COLORS.violet, 3, 170, 0.3, 2.2);
+      burst(cx, cy, COLORS.ink, 1, 110, 0.2, 1.6);
+      if (e.hp <= 0) {
+        state.enemies.splice(ei, 1);
+        events = killEnemy(e, events);
+      } else {
+        events |= EVENT_HITMARK;
+      }
+    }
+    state.shake = Math.min(16, state.shake + 1.2);
+    return events | EVENT_LANCE;
+  }
+
   function stepPlayer(dt, ctl, events) {
     const p = state.player;
     if (!p.alive) return events;
@@ -290,31 +338,65 @@ export function createWorld(rng) {
     p.flashT = Math.max(0, p.flashT - dt);
     p.spreadT = Math.max(0, p.spreadT - dt);
     p.shieldT = Math.max(0, p.shieldT - dt);
+    p.lanceT = Math.max(0, p.lanceT - dt);
+    p.novaT = Math.max(0, p.novaT - dt);
     p.invulnT = Math.max(0, p.invulnT - dt);
-    // Engine trail while thrusting.
+    // Engine trail: a two-tone exhaust plume behind the hull, denser the faster she flies.
     p.trailT -= dt;
-    if ((ctl.move.x !== 0 || ctl.move.y !== 0) && p.trailT <= 0) {
-      p.trailT = 0.03;
-      const back = p.angle + Math.PI;
+    const thrust = Math.hypot(p.vx, p.vy);
+    if (thrust > 30 && p.trailT <= 0) {
+      p.trailT = 0.024;
+      const back = Math.atan2(-p.vy, -p.vx);
+      const bx = p.x + Math.cos(back) * (p.r - 2);
+      const by = p.y + Math.sin(back) * (p.r - 2);
       state.parts.push({
-        x: p.x + Math.cos(back) * p.r, y: p.y + Math.sin(back) * p.r,
-        vx: Math.cos(back) * 60 + range(rng, -16, 16), vy: Math.sin(back) * 60 + range(rng, -16, 16),
-        life: 0.3, maxLife: 0.3, size: 2.2, color: COLORS.cyan,
+        x: bx + range(rng, -3, 3), y: by + range(rng, -3, 3),
+        vx: Math.cos(back) * 70 + range(rng, -20, 20), vy: Math.sin(back) * 70 + range(rng, -20, 20),
+        life: 0.36, maxLife: 0.36, size: range(rng, 1.8, 3.4), color: COLORS.cyan,
+      });
+      state.parts.push({
+        x: bx, y: by,
+        vx: Math.cos(back) * 44 + range(rng, -12, 12), vy: Math.sin(back) * 44 + range(rng, -12, 12),
+        life: 0.5, maxLife: 0.5, size: range(rng, 1.2, 2.2), color: COLORS.lilac,
       });
     }
-    if (ctl.fire && p.fireCd <= 0) {
-      p.fireCd = 1 / PLAYER.fireRate;
-      p.flashT = 0.05;
-      const angles = p.spreadT > 0 ? [-0.16, 0, 0.16] : [0];
-      for (const off of angles) {
-        const a = p.angle + off;
-        state.bullets.push({
-          x: p.x + Math.cos(p.angle) * (p.r + 6), y: p.y + Math.sin(p.angle) * (p.r + 6),
-          vx: Math.cos(a) * PLAYER.bulletSpeed, vy: Math.sin(a) * PLAYER.bulletSpeed,
-          life: PLAYER.bulletLife,
-        });
+    // The nova, while it lasts: a full ring of bullets every interval, trigger or not.
+    if (p.novaT > 0) {
+      p.novaCd -= dt;
+      if (p.novaCd <= 0) {
+        p.novaCd = NOVA.interval;
+        const base = rng() * TAU;
+        for (let i = 0; i < NOVA.bullets; i += 1) {
+          const a = base + (i / NOVA.bullets) * TAU;
+          state.bullets.push({
+            x: p.x + Math.cos(a) * (p.r + 4), y: p.y + Math.sin(a) * (p.r + 4),
+            vx: Math.cos(a) * NOVA.bulletSpeed, vy: Math.sin(a) * NOVA.bulletSpeed,
+            life: NOVA.bulletLife,
+          });
+        }
+        burst(p.x, p.y, COLORS.magenta, 10, 150, 0.35, 2.4);
+        events |= EVENT_NOVA;
       }
-      events |= EVENT_SHOOT;
+    }
+    if (ctl.fire && p.fireCd <= 0) {
+      if (p.lanceT > 0) {
+        p.fireCd = 1 / LANCE.fireRate;
+        p.flashT = 0.05;
+        events = fireLance(p, events);
+      } else {
+        p.fireCd = 1 / PLAYER.fireRate;
+        p.flashT = 0.05;
+        const angles = p.spreadT > 0 ? [-0.16, 0, 0.16] : [0];
+        for (const off of angles) {
+          const a = p.angle + off;
+          state.bullets.push({
+            x: p.x + Math.cos(p.angle) * (p.r + 6), y: p.y + Math.sin(p.angle) * (p.r + 6),
+            vx: Math.cos(a) * PLAYER.bulletSpeed, vy: Math.sin(a) * PLAYER.bulletSpeed,
+            life: PLAYER.bulletLife,
+          });
+        }
+        events |= EVENT_SHOOT;
+      }
     }
     if (ctl.bomb) events = detonateBomb(events);
     return events;
@@ -332,28 +414,90 @@ export function createWorld(rng) {
       const ux = dx / d;
       const uy = dy / d;
       if (e.kind === 'boss') {
+        // Below 40% hull the Dreadnought enrages: it presses lower and faster, and a
+        // twin spiral barrage joins its aimed spread and radial bursts.
+        if (!e.enraged && e.hp <= e.maxHp * 0.4) {
+          e.enraged = true;
+          burst(e.x, e.y, COLORS.ember, 42, 330, 0.8, 3.4);
+          burst(e.x, e.y, COLORS.ink, 16, 200, 0.5, 2.4);
+          floatText(e.x, e.y + e.r + 30, 'DREADNOUGHT ENRAGED', COLORS.red, 24);
+          state.shake = Math.min(18, state.shake + 8);
+          events |= EVENT_ENRAGE;
+        }
         const targetX = W / 2 + Math.sin(e.age * 0.35) * 400;
-        const targetY = 202 + Math.sin(e.age * 0.9) * 26;
-        e.x += (targetX - e.x) * Math.min(1, dt * 0.8);
-        e.y += (targetY - e.y) * Math.min(1, dt * 0.8);
+        const targetY = e.enraged ? 224 + Math.sin(e.age * 1.25) * 42 : 202 + Math.sin(e.age * 0.9) * 26;
+        const ease = e.enraged ? 1.05 : 0.8;
+        e.x += (targetX - e.x) * Math.min(1, dt * ease);
+        e.y += (targetY - e.y) * Math.min(1, dt * ease);
         e.angle = Math.atan2(dy, dx);
         e.spreadT -= dt;
         e.burstT -= dt;
         if (p.alive && e.spreadT <= 0) {
-          e.spreadT = 1.5;
+          e.spreadT = e.enraged ? 1.15 : 1.5;
           for (const off of [-0.18, 0, 0.18]) {
             const a = Math.atan2(dy, dx) + off;
             state.ebullets.push({ x: e.x, y: e.y + 30, vx: Math.cos(a) * BOLT.speed, vy: Math.sin(a) * BOLT.speed, life: BOLT.life });
           }
         }
         if (p.alive && e.burstT <= 0) {
-          e.burstT = 3.1;
+          e.burstT = e.enraged ? 2.5 : 3.1;
           const base = rng() * TAU;
           for (let i = 0; i < 14; i += 1) {
             const a = base + (i / 14) * TAU;
             state.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * BOLT.speed * 0.8, vy: Math.sin(a) * BOLT.speed * 0.8, life: BOLT.life });
           }
         }
+        if (p.alive && e.enraged) {
+          e.spiralT -= dt;
+          if (e.spiralT <= 0) {
+            e.spiralT = 0.16;
+            e.spiralA += 0.45;
+            for (const off of [0, Math.PI]) {
+              const a = e.spiralA + off;
+              state.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * BOLT.speed * 0.78, vy: Math.sin(a) * BOLT.speed * 0.78, life: BOLT.life });
+            }
+          }
+        }
+        continue;
+      }
+      if (e.kind === 'sniper') {
+        // Keep the band: close in beyond maxRange, back off inside minRange, strafe
+        // between. When the refire timer runs out in sight range it stops, charges
+        // (the renderer draws the sight line), and looses one fast, heavy bolt.
+        let vx = 0;
+        let vy = 0;
+        if (e.charge > 0) {
+          e.charge -= dt;
+          vx = e.vx * 0.2;
+          vy = e.vy * 0.2;
+          if (e.charge <= 0 && p.alive) {
+            const a = Math.atan2(p.y - e.y, p.x - e.x);
+            state.ebullets.push({
+              x: e.x + Math.cos(a) * (e.r + 4), y: e.y + Math.sin(a) * (e.r + 4),
+              vx: Math.cos(a) * SNIPER.boltSpeed, vy: Math.sin(a) * SNIPER.boltSpeed,
+              life: BOLT.life, dmg: SNIPER.boltDamage, big: true,
+            });
+            e.fireT = range(rng, SNIPER.refireMin, SNIPER.refireMax);
+            burst(e.x + Math.cos(a) * e.r, e.y + Math.sin(a) * e.r, COLORS.acid, 5, 150, 0.3, 2.2);
+            events |= EVENT_SNIPE;
+          }
+        } else {
+          if (d > SNIPER.maxRange) { vx = ux * spec.speed; vy = uy * spec.speed; }
+          else if (d < SNIPER.minRange) { vx = -ux * spec.speed * 0.85; vy = -uy * spec.speed * 0.85; }
+          else {
+            const dir = Math.sin(e.seed) > 0 ? 1 : -1;
+            vx = -uy * dir * spec.speed * 0.45;
+            vy = ux * dir * spec.speed * 0.45;
+          }
+          e.fireT -= dt;
+          if (e.fireT <= 0 && p.alive && d < SNIPER.sightRange) e.charge = SNIPER.chargeTime;
+          else if (e.fireT <= 0) e.fireT = 0.4;
+        }
+        e.vx += (vx - e.vx) * Math.min(1, dt * 3.2);
+        e.vy += (vy - e.vy) * Math.min(1, dt * 3.2);
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+        e.angle = Math.atan2(p.y - e.y, p.x - e.x);
         continue;
       }
       let vx = ux * spec.speed;
@@ -416,6 +560,12 @@ export function createWorld(rng) {
           consumed = true;
           e.hp -= 1;
           e.flashT = 0.07;
+          // A visible shove on the light hulls; heavies and the boss shrug it off.
+          if (e.kind !== 'boss' && e.kind !== 'tank') {
+            const bl = Math.hypot(b.vx, b.vy) || 1;
+            e.vx += (b.vx / bl) * 55;
+            e.vy += (b.vy / bl) * 55;
+          }
           burst(b.x, b.y, ENEMY[e.kind].color, 2, 130, 0.25, 1.8);
           if (e.hp <= 0) {
             state.enemies.splice(ei, 1);
@@ -435,7 +585,7 @@ export function createWorld(rng) {
         const rr = p.r + BOLT.radius;
         if (dist2(b.x, b.y, p.x, p.y) < rr * rr) {
           state.ebullets.splice(bi, 1);
-          events = damagePlayer(BOLT.damage, events);
+          events = damagePlayer(b.dmg ?? BOLT.damage, events);
           if (!p.alive) break;
         }
       }
@@ -467,6 +617,8 @@ export function createWorld(rng) {
           if (up.kind === 'spread') { p.spreadT = 12; floatText(p.x, p.y - 26, 'SPREAD SHOT', COLORS.cyan, 16); }
           if (up.kind === 'shield') { p.shieldT = 10; floatText(p.x, p.y - 26, 'SHIELD UP', COLORS.green, 16); }
           if (up.kind === 'bomb') { p.bombs = Math.min(3, p.bombs + 1); floatText(p.x, p.y - 26, '+1 BOMB', COLORS.amber, 16); }
+          if (up.kind === 'lance') { p.lanceT = LANCE.duration; floatText(p.x, p.y - 26, 'LANCE ONLINE', COLORS.violet, 16); }
+          if (up.kind === 'nova') { p.novaT = NOVA.duration; p.novaCd = 0; floatText(p.x, p.y - 26, 'NOVA BURST', COLORS.magenta, 16); }
           events |= EVENT_POWER;
         }
       }
@@ -475,6 +627,10 @@ export function createWorld(rng) {
   }
 
   function stepFx(dt) {
+    for (let i = state.beams.length - 1; i >= 0; i -= 1) {
+      state.beams[i].life -= dt;
+      if (state.beams[i].life <= 0) state.beams.splice(i, 1);
+    }
     for (let i = state.parts.length - 1; i >= 0; i -= 1) {
       const part = state.parts[i];
       part.life -= dt;

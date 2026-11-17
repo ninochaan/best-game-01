@@ -10,8 +10,9 @@
 import { BEST_KEY, STEP, W } from './config.js';
 import { createRandom } from './random.js';
 import {
-  createWorld, EVENT_BOMB, EVENT_BOSS, EVENT_BOSSDOWN, EVENT_DEATH, EVENT_HITMARK,
-  EVENT_HURT, EVENT_KILL, EVENT_OVER, EVENT_POWER, EVENT_SHOOT,
+  createWorld, EVENT_BOMB, EVENT_BOSS, EVENT_BOSSDOWN, EVENT_DEATH, EVENT_ENRAGE,
+  EVENT_HITMARK, EVENT_HURT, EVENT_KILL, EVENT_LANCE, EVENT_NOVA, EVENT_OVER,
+  EVENT_POWER, EVENT_SHOOT, EVENT_SNIPE,
 } from './world.js';
 import { ACTION_BOMB, ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
@@ -40,6 +41,7 @@ function titleCast() {
     ['splitter', W / 2 - 360, 640],
     ['tank', W / 2 + 380, 620],
     ['mini', W / 2 + 120, 190],
+    ['sniper', W / 2 + 580, 450],
   ];
   for (const [kind, x, y] of cast) world.spawnEnemy(kind, x, y);
   world.state.queue = [];
@@ -119,6 +121,10 @@ function runGame() {
     if (events & EVENT_POWER) audio.power();
     if (events & EVENT_BOMB) audio.bomb();
     if (events & EVENT_BOSS) audio.bossWarn();
+    if (events & EVENT_LANCE) audio.lance();
+    if (events & EVENT_NOVA) audio.nova();
+    if (events & EVENT_ENRAGE) audio.enrage();
+    if (events & EVENT_SNIPE) audio.snipe();
   }
 
   function frame(now) {

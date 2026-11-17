@@ -5,7 +5,7 @@
 // mouse points back into world coordinates. HUD and screen overlays are drawn unshaken, on
 // top of the shaken world, under a soft vignette.
 
-import { BOLT, COLORS, ENEMY, H, PLAYER, W } from './config.js';
+import { BOLT, COLORS, ENEMY, H, PLAYER, SNIPER, W } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -41,6 +41,10 @@ function kindPath(ctx, kind, r) {
     }
     ctx.closePath();
   } else if (kind === 'mini') poly(ctx, [r, 0, -r, r - 3, -r, -r + 3]);
+  else if (kind === 'sniper') {
+    // A long needle hull with a forked tail: it reads as a marksman, not a brawler.
+    poly(ctx, [r + 7, 0, -r + 2, r - 5, -r - 3, r + 2, -r + 5, 0, -r - 3, -r - 2, -r + 2, -r + 5]);
+  }
   else if (kind === 'tank') {
     ctx.beginPath();
     for (let i = 0; i < 8; i += 1) {
@@ -163,6 +167,23 @@ export function createRenderer(canvas) {
       }
     }
     ctx.drawImage(nebLayer, 0, 0);
+    // A second, nearer dust layer drifting slowly across the baked nebula: the parallax
+    // between the two sells the depth of the field.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 3; i += 1) {
+      const neb = state.nebs[i];
+      const dx = Math.sin(state.time * 0.021 * (i + 1) + neb.x) * 46;
+      const dy = Math.cos(state.time * 0.017 * (i + 1) + neb.y) * 30;
+      const grad = ctx.createRadialGradient(neb.x + dx, neb.y + dy, 0, neb.x + dx, neb.y + dy, neb.r * 0.55);
+      grad.addColorStop(0, neb.color);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = grad;
+      ctx.fillRect(neb.x + dx - neb.r, neb.y + dy - neb.r, neb.r * 2, neb.r * 2);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
 
   function drawStars(state) {
@@ -191,7 +212,14 @@ export function createRenderer(canvas) {
     ctx.save();
     ctx.translate(up.x, up.y + bob);
     ctx.globalAlpha = blink;
-    const color = up.kind === 'spread' ? COLORS.cyan : up.kind === 'shield' ? COLORS.green : COLORS.amber;
+    const look = {
+      spread: [COLORS.cyan, 'S'],
+      shield: [COLORS.green, 'O'],
+      bomb: [COLORS.amber, 'B'],
+      lance: [COLORS.violet, 'L'],
+      nova: [COLORS.magenta, 'N'],
+    }[up.kind] ?? [COLORS.cyan, '?'];
+    const color = look[0];
     ctx.strokeStyle = color;
     ctx.fillStyle = 'rgba(8,10,26,0.9)';
     ctx.lineWidth = 2;
@@ -206,7 +234,7 @@ export function createRenderer(canvas) {
     ctx.font = `800 13px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(up.kind === 'spread' ? 'S' : up.kind === 'shield' ? 'O' : 'B', 0, 1);
+    ctx.fillText(look[1], 0, 1);
     ctx.restore();
   }
 
@@ -224,9 +252,11 @@ export function createRenderer(canvas) {
     ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2);
     ctx.fill();
     if (p.flashT > 0) {
+      // Muzzle flash, swelling with the freshness of the shot.
       const nx = p.x + Math.cos(p.angle) * (p.r + 10);
       const ny = p.y + Math.sin(p.angle) * (p.r + 10);
-      ctx.drawImage(sprites.bullet, nx - 12, ny - 12);
+      const s = p.lanceT > 0 ? 38 : 24 + p.flashT * 160;
+      ctx.drawImage(sprites.bullet, nx - s / 2, ny - s / 2, s, s);
     }
     if (p.shieldT > 0) {
       ctx.save();
@@ -242,15 +272,84 @@ export function createRenderer(canvas) {
     }
   }
 
+  function drawBeams(state) {
+    if (!state.beams.length) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (const beam of state.beams) {
+      const fade = Math.max(0, beam.life / beam.maxLife);
+      ctx.globalAlpha = 0.28 * fade;
+      ctx.strokeStyle = COLORS.violet;
+      ctx.lineWidth = 15;
+      ctx.beginPath();
+      ctx.moveTo(beam.x1, beam.y1);
+      ctx.lineTo(beam.x2, beam.y2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.95 * fade;
+      ctx.strokeStyle = '#efe8ff';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(beam.x1, beam.y1);
+      ctx.lineTo(beam.x2, beam.y2);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
   function drawWorld(state) {
     drawNebula(state);
     drawStars(state);
     for (const up of state.ups) drawPowerup(up);
-    for (const b of state.ebullets) ctx.drawImage(sprites.bolt, b.x - 12, b.y - 12);
+    // Sniper sight lines first, under everything: the telegraph a pilot dodges by.
+    const p = state.player;
+    if (p && p.alive) {
+      for (const e of state.enemies) {
+        if (e.kind !== 'sniper' || e.charge <= 0) continue;
+        const heat = 1 - e.charge / SNIPER.chargeTime;
+        ctx.save();
+        ctx.globalAlpha = 0.14 + 0.5 * heat;
+        ctx.strokeStyle = COLORS.acid;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([9, 7]);
+        ctx.beginPath();
+        ctx.moveTo(e.x, e.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowColor = COLORS.acid;
+        ctx.shadowBlur = 10 + 14 * heat;
+        ctx.fillStyle = COLORS.acid;
+        ctx.beginPath();
+        ctx.arc(e.x + Math.cos(e.angle) * (e.r + 4), e.y + Math.sin(e.angle) * (e.r + 4), 2.5 + 3 * heat, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    for (const b of state.ebullets) {
+      if (b.big) ctx.drawImage(sprites.bolt, b.x - 18, b.y - 18, 36, 36);
+      else ctx.drawImage(sprites.bolt, b.x - 12, b.y - 12);
+    }
     for (const e of state.enemies) {
       drawSprite(e.flashT > 0 ? sprites.flash[e.kind] : sprites.enemy[e.kind], e.x, e.y, e.angle);
-      if (e.kind === 'tank') {
-        // A slim damage bar over the heavies.
+      if (e.kind === 'boss' && e.enraged) {
+        // A rotating warning ring around the enraged hull.
+        ctx.save();
+        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(state.time * 7);
+        ctx.strokeStyle = COLORS.red;
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = COLORS.red;
+        ctx.shadowBlur = 12;
+        ctx.setLineDash([26, 18]);
+        ctx.lineDashOffset = -state.time * 60;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r + 16, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (e.kind === 'tank' || e.kind === 'sniper') {
+        // A slim damage bar over the heavies and the marksmen.
         const w = e.r * 1.7;
         ctx.fillStyle = 'rgba(255,255,255,0.16)';
         ctx.fillRect(e.x - w / 2, e.y - e.r - 13, w, 4);
@@ -259,6 +358,7 @@ export function createRenderer(canvas) {
       }
     }
     for (const b of state.bullets) ctx.drawImage(sprites.bullet, b.x - 12, b.y - 12);
+    drawBeams(state);
     drawPlayer(state);
     // Particles burn additively.
     ctx.save();
@@ -324,11 +424,12 @@ export function createRenderer(canvas) {
     // Boss health, top-centre under the wave.
     if (state.boss) {
       const w = 520;
+      const enraged = state.boss.hp <= state.boss.maxHp * 0.4;
       ctx.textAlign = 'center';
       ctx.font = `600 12px ${FONT}`;
-      ctx.fillStyle = COLORS.ember;
-      ctx.fillText('— DREADNOUGHT —', W / 2, 96);
-      bar(W / 2 - w / 2, 104, w, 8, state.boss.hp / state.boss.maxHp, COLORS.ember);
+      ctx.fillStyle = enraged ? COLORS.red : COLORS.ember;
+      ctx.fillText(enraged ? '— DREADNOUGHT ENRAGED —' : '— DREADNOUGHT —', W / 2, 96);
+      bar(W / 2 - w / 2, 104, w, 8, state.boss.hp / state.boss.maxHp, enraged ? COLORS.red : COLORS.ember);
     }
     if (!p) return;
     // Hull + lives, bottom-left.
@@ -348,18 +449,19 @@ export function createRenderer(canvas) {
     }
     // Active power-up timers, above the hull bar.
     let ty = H - 108;
-    if (p.spreadT > 0) {
+    const timers = [
+      ['SPREAD', p.spreadT, 12, COLORS.cyan],
+      ['SHIELD', p.shieldT, 10, COLORS.green],
+      ['LANCE', p.lanceT, 10, COLORS.violet],
+      ['NOVA', p.novaT, 10, COLORS.magenta],
+    ];
+    for (const [label, left, full, color] of timers) {
+      if (left <= 0) continue;
       ctx.font = `600 11px ${FONT}`;
-      ctx.fillStyle = COLORS.cyan;
-      ctx.fillText('SPREAD', 26, ty + 3);
-      bar(86, ty - 6, 90, 6, p.spreadT / 12, COLORS.cyan);
+      ctx.fillStyle = color;
+      ctx.fillText(label, 26, ty + 3);
+      bar(86, ty - 6, 90, 6, left / full, color);
       ty -= 18;
-    }
-    if (p.shieldT > 0) {
-      ctx.font = `600 11px ${FONT}`;
-      ctx.fillStyle = COLORS.green;
-      ctx.fillText('SHIELD', 26, ty + 3);
-      bar(86, ty - 6, 90, 6, p.shieldT / 10, COLORS.green);
     }
     // Bombs, bottom-right.
     ctx.textAlign = 'right';
@@ -430,7 +532,8 @@ export function createRenderer(canvas) {
       'WASD / ARROWS — steer        MOUSE — aim        HOLD CLICK / SPACE — fire',
       'Q / RIGHT CLICK — bomb        P — pause        M — mute',
       'Survive the waves. Chain kills to raise your multiplier.',
-      'Grab S for spread shot, O for shield, B for bombs. A boss comes every fifth wave.',
+      'Grab S spread, O shield, B bombs, L the piercing lance, N the nova burst.',
+      'Dodge the acid snipers\u2019 sight lines — and a boss comes every fifth wave.',
     ];
     lines.forEach((line, i) => ctx.fillText(line, W / 2, 512 + i * 30));
     if (best > 0) centerText(`BEST ${best}`, 668, `700 19px ${MONO}`, COLORS.amber);
@@ -505,6 +608,16 @@ export function createRenderer(canvas) {
       ctx.fillStyle = state.flashColor;
       ctx.fillRect(0, 0, W, H);
       ctx.globalAlpha = 1;
+    }
+    // Low-hull warning: the screen edges breathe red while the ship is close to death.
+    const pl = state.player;
+    if (screen === SCREEN_PLAY && pl && pl.alive && pl.hp > 0 && pl.hp <= PLAYER.maxHp * 0.3) {
+      const pulse = 0.1 + 0.08 * Math.sin(state.time * 6.5);
+      const warn = ctx.createRadialGradient(W / 2, H / 2, H * 0.36, W / 2, H / 2, H * 0.92);
+      warn.addColorStop(0, 'rgba(255,56,96,0)');
+      warn.addColorStop(1, `rgba(255,56,96,${pulse.toFixed(3)})`);
+      ctx.fillStyle = warn;
+      ctx.fillRect(0, 0, W, H);
     }
     // Vignette.
     if (!vignette) {

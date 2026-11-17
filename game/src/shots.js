@@ -7,18 +7,6 @@
 import { COLORS, W } from './config.js';
 import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 
-function bulletRow(state, x, y, angle, count, gap) {
-  for (let i = 0; i < count; i += 1) {
-    state.bullets.push({
-      x: x + Math.cos(angle) * gap * i,
-      y: y + Math.sin(angle) * gap * i,
-      vx: Math.cos(angle) * 760,
-      vy: Math.sin(angle) * 760,
-      life: 1,
-    });
-  }
-}
-
 function quietArena(world) {
   const state = world.state;
   state.queue = [];
@@ -26,6 +14,15 @@ function quietArena(world) {
   state.phaseT = 0;
   state.ebullets.length = 0;
   return state;
+}
+
+/** A hand-posed lance beam with a long fade, so it survives the attract-mode settling steps. */
+function stageBeam(state, x, y, angle) {
+  state.beams.push({
+    x1: x + Math.cos(angle) * 19, y1: y + Math.sin(angle) * 19,
+    x2: x + Math.cos(angle) * 1250, y2: y + Math.sin(angle) * 1250,
+    life: 5, maxLife: 5,
+  });
 }
 
 function stageMenu(world) {
@@ -38,8 +35,12 @@ function stageMenu(world) {
     ['splitter', W / 2 - 360, 640],
     ['tank', W / 2 + 380, 620],
     ['mini', W / 2 + 120, 190],
+    ['sniper', W / 2 + 580, 450],
   ];
   for (const [kind, x, y] of cast) world.spawnEnemy(kind, x, y);
+  // The two new power-ups hover at the edges of the ring, on display.
+  state.ups.push({ kind: 'lance', x: W / 2 - 585, y: 462, t: 0.6, life: 8 });
+  state.ups.push({ kind: 'nova', x: W / 2 + 585, y: 168, t: 1.4, life: 8 });
   world.burst(W / 2 - 430, 300, COLORS.magenta, 6, 120, 0.8, 2.4);
   world.burst(W / 2 + 380, 620, COLORS.ember, 6, 120, 0.8, 2.4);
   return { screen: SCREEN_TITLE, best: 8450 };
@@ -57,11 +58,22 @@ function stagePlay(world) {
   p.x = 520;
   p.y = 560;
   p.hp = 72;
-  p.angle = Math.atan2(300 - p.y, 900 - p.x);
   p.flashT = 0.02;
-  p.spreadT = 6;
+  p.lanceT = 7;
+  p.novaT = 4;
   p.bombs = 2;
-  bulletRow(state, p.x + 30, p.y - 14, p.angle, 4, 74);
+  // The lance is live: the pilot is skewering the lead chaser, mid-beam.
+  p.angle = Math.atan2(262 - p.y, 985 - p.x);
+  stageBeam(state, p.x, p.y, p.angle);
+  // A nova ring, caught a blink after it burst.
+  for (let i = 0; i < 12; i += 1) {
+    const a = (i / 12) * Math.PI * 2 + 0.26;
+    const r = 74 + (i % 3) * 22;
+    state.bullets.push({
+      x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r,
+      vx: Math.cos(a) * 540, vy: Math.sin(a) * 540, life: 0.8,
+    });
+  }
   world.spawnEnemy('chaser', 985, 262);
   world.spawnEnemy('chaser', 1085, 425);
   world.spawnEnemy('chaser', 250, 390);
@@ -69,6 +81,10 @@ function stagePlay(world) {
   world.spawnEnemy('splitter', 1180, 565);
   const tank = world.spawnEnemy('tank', 1245, 305);
   tank.hp = 11;
+  // A sniper at the flank, halfway through its charge: the sight line gives it away.
+  const sniper = world.spawnEnemy('sniper', 1150, 648);
+  sniper.charge = 0.5;
+  sniper.angle = Math.atan2(p.y - sniper.y, p.x - sniper.x);
   world.spawnEnemy('mini', 760, 430);
   world.spawnEnemy('mini', 700, 480);
   world.spawnEnemy('mini', 950, 700);
@@ -89,7 +105,9 @@ function stageBoss(world) {
   state.kills = 96;
   state.lives = 2;
   const boss = world.spawnEnemy('boss', W / 2 + 130, 202);
-  boss.hp = Math.round(boss.maxHp * 0.62);
+  // Deep in the enrage: a third of its hull left, spiral barrage already spinning.
+  boss.hp = Math.round(boss.maxHp * 0.34);
+  boss.enraged = true;
   const p = state.player;
   p.x = 655;
   p.y = 700;
@@ -97,8 +115,10 @@ function stageBoss(world) {
   p.angle = Math.atan2(boss.y - p.y, boss.x - p.x);
   p.flashT = 0.02;
   p.shieldT = 4;
+  p.lanceT = 6;
   p.bombs = 1;
-  bulletRow(state, p.x + 16, p.y - 30, p.angle, 5, 82);
+  // The pilot answers with the lance, straight into the dreadnought's core.
+  stageBeam(state, p.x, p.y, p.angle);
   // The boss's radial burst, frozen on its way out, plus an aimed trio.
   for (let i = 0; i < 10; i += 1) {
     const a = (i / 10) * Math.PI * 2 + 0.4;
@@ -107,8 +127,20 @@ function stageBoss(world) {
       vx: Math.cos(a) * 196, vy: Math.sin(a) * 196, life: 3,
     });
   }
+  // The enrage spiral: two arms of bolts winding out of the hull.
+  for (let i = 0; i < 9; i += 1) {
+    for (const off of [0, Math.PI]) {
+      const a = 0.6 + i * 0.45 + off;
+      const r = 96 + i * 17;
+      state.ebullets.push({
+        x: boss.x + Math.cos(a) * r, y: boss.y + Math.sin(a) * r,
+        vx: Math.cos(a) * 190, vy: Math.sin(a) * 190, life: 3,
+      });
+    }
+  }
   world.spawnEnemy('chaser', 210, 300);
   world.spawnEnemy('chaser', 1235, 330);
+  world.spawnEnemy('sniper', 175, 545);
   world.burst(boss.x - 40, boss.y + 30, COLORS.ember, 16, 260, 0.7, 3);
   world.burst(p.x + 90, p.y - 120, COLORS.cyan, 8, 180, 0.5, 2.4);
   world.floatText(boss.x - 90, boss.y + 84, '+300', COLORS.ember, 17);
@@ -132,6 +164,7 @@ function stageOver(world) {
   world.spawnEnemy('chaser', 1010, 260);
   world.spawnEnemy('weaver', 900, 620);
   world.spawnEnemy('splitter', 300, 610);
+  world.spawnEnemy('sniper', 1160, 470);
   // The wreck of the player's ship, still smouldering at centre field.
   world.burst(W / 2, 560, COLORS.cyan, 42, 300, 1.1, 3.4);
   world.burst(W / 2, 560, COLORS.amber, 22, 200, 0.9, 3);

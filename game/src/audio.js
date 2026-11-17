@@ -9,6 +9,7 @@ export function createAudio() {
   let master = null;
   let muted = false;
   let lastShoot = 0;
+  let lastLance = 0;
 
   function unlock() {
     if (!ctx) {
@@ -83,6 +84,31 @@ export function createAudio() {
     },
     hit() {
       tone('triangle', 300, 140, 0.05, 0.06);
+    },
+    /** The lance: a tearing zap, throttled like the gun. */
+    lance() {
+      if (!ready()) return;
+      const now = performance.now();
+      if (now - lastLance < 70) return;
+      lastLance = now;
+      tone('sawtooth', 1500, 180, 0.09, 0.06);
+      tone('square', 2400, 300, 0.05, 0.03);
+    },
+    /** The nova ring going off: a bright two-note bloom with a breath of noise. */
+    nova() {
+      tone('triangle', 520, 990, 0.16, 0.1);
+      tone('triangle', 780, 1320, 0.14, 0.07, 0.05);
+      noise(0.12, 0.06, 2600);
+    },
+    /** A sniper's charged shot cracking past. */
+    snipe() {
+      tone('square', 1250, 240, 0.09, 0.07);
+    },
+    /** The Dreadnought enraging: a low roar under a rising snarl. */
+    enrage() {
+      tone('sawtooth', 82, 55, 0.7, 0.3);
+      tone('sawtooth', 130, 260, 0.5, 0.16, 0.12);
+      noise(0.5, 0.22, 500);
     },
     explosion(big = false) {
       noise(big ? 0.55 : 0.28, big ? 0.5 : 0.28, big ? 900 : 1400);

@@ -26,6 +26,7 @@ export const COLORS = {
   ember: '#ff5a3c',
   green: '#52ffa8',
   red: '#ff3860',
+  acid: '#c8ff3d',
 };
 
 export const PLAYER = {
@@ -48,11 +49,34 @@ export const ENEMY = {
   splitter: { radius: 24, hp: 7, speed: 62, score: 200, damage: 18, color: COLORS.violet },
   mini: { radius: 9, hp: 1, speed: 218, score: 50, damage: 8, color: COLORS.lilac },
   tank: { radius: 26, hp: 18, speed: 46, score: 300, damage: 22, color: COLORS.ember },
+  sniper: { radius: 14, hp: 4, speed: 96, score: 250, damage: 12, color: COLORS.acid },
   boss: { radius: 58, hp: 170, speed: 40, score: 2000, damage: 30, color: COLORS.ember },
 };
 
 /** Enemy bolt (the shots tanks and the boss fire back). */
 export const BOLT = { speed: 245, radius: 5, damage: 12, life: 4.5 };
 
+/**
+ * The sniper: it keeps its distance (retreats inside `minRange`, advances beyond
+ * `maxRange`, strafes between), then stops to charge a fast, heavy bolt. The charge is
+ * telegraphed by a sight line, so a moving pilot can dodge the shot.
+ */
+export const SNIPER = {
+  minRange: 330,
+  maxRange: 480,
+  sightRange: 720,
+  chargeTime: 1.15,
+  boltSpeed: 400,
+  boltDamage: 14,
+  refireMin: 2.4,
+  refireMax: 3.2,
+};
+
+/** The lance power-up: while it lasts, the gun fires a piercing beam instead of bullets. */
+export const LANCE = { duration: 10, fireRate: 5.5, damage: 2, length: 1250, width: 10 };
+
+/** The nova power-up: while it lasts, the ship periodically bursts a ring of bullets. */
+export const NOVA = { duration: 10, interval: 1.3, bullets: 14, bulletSpeed: 540, bulletLife: 0.85 };
+
 /** Power-up kinds, in drop-table order. */
-export const POWER_KINDS = ['spread', 'shield', 'bomb'];
+export const POWER_KINDS = ['spread', 'shield', 'bomb', 'lance', 'nova'];
